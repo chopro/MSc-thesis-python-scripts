@@ -1,0 +1,162 @@
+# -*- coding: utf-8 -*-
+"""
+Created on Fri Jun 20 17:42:30 2014
+
+load data into text (.txt) file (only needed once)
+
+input: m1 - first month
+input: m2 - last month (add +1)
+input: rover - rover name
+input: year - year
+
+
+@author: Tayo
+"""
+import numpy
+import time
+import calendar
+import matplotlib.pyplot
+import os #check if path exists
+import re #to split string by multiple delimeters
+from re import split
+import sys
+
+from matplotlib.pyplot import plot,figure,show,title,errorbar,ion,ylabel,draw,close,savefig,xlabel,subplots,tight_layout,xlim,ylim
+from numpy import loadtxt,sin,cos,linspace,genfromtxt,array,hstack,vstack,str,arange
+from matplotlib.ticker import MultipleLocator, FormatStrFormatter, LinearLocator
+
+sys.path.insert(0, '/home/tayo/Master_thesis_FALCON/Python_script/functions/')
+from months import MONTHS
+from transformation import ECEF2ENU
+sys.path.insert(0, '/home/tayo/Master_thesis_FALCON/Python_script/Breidamerkurjokull/')
+
+
+"""data"""
+if 'final' in locals():
+    del final
+m1=1                    #choose first month
+m2=12                   #choose last month
+for i in range(m1,m2+1):    #1,13 is the entire year
+    if i<10.:
+        m = '0'+str(i)
+    else:
+        m = str(i)
+        
+    print(i)            #print to see what month the compilation is working on
+    
+    rover='ICEA'
+    year ='2010'
+    if year=='2012':        #adjust for leap year (in months script)
+        leap=1
+    else:
+        leap=0
+    up,down = MONTHS(i,leap)            #get first day of the month in (day of year) and month name (string)
+    DATA_ROOT = '/home/tayo/Master_thesis_FALCON/Data/Processed_GPS/Breidamerkurjokull/'+rover+'/pos/'
+    OUTPUT_ROOT = '/home/tayo/Master_thesis_FALCON/Data/Processed_GPS/Breidamerkurjokull/'+rover+'/txt/'
+    fn = rover+'_'+m+'-4.pos' #(for 2010: DATA_ROOT+rover+'_'+m+'-4.pos' for 2012/2013: DATA_ROOT+rover+m+'a.pos'
+    f = DATA_ROOT+fn  
+    if os.path.exists(f) == True:   #only process months that exist
+    
+        data = genfromtxt(f,dtype=str,comments='%')     #first import all the data as strings, leaving out the comments that are given by %
+        
+        c=5     #slice data, c=1 means no slicing (2010:5 because data every 30s instead of every 15s, for 2012/2013:10)
+        a=0     #at what row to start taking data, 0 by default
+        alles=len(data)
+        
+        b=int(alles/c)      #by default take all the rows in the .pos file
+        data_jump=c/2.    
+        print('data every '+str(data_jump)+' min')
+        
+        data = data[::c,:]     #take only every c row
+        
+        """time"""
+        dates = data[:,0]           #the year, month, day is in the first column
+        date = split('/',dates[a])  #create a first array by splitting the string by the delimeter '/'. By having a first array the loop can add (vstack) all the other split rows
+        for j in range(a + 1,b):   
+            add = split('/',dates[j])    
+            date = vstack((date,add))
+        
+        times = data[:,1]           #just like above, but for the time
+        time = split(':',times[a])
+        for k in range(a + 1,b):
+            add = split(':',times[k])
+            time = vstack((time,add))
+            
+        month = array(date[:,1], dtype=float)       #split into appropriate arrays and make float number
+        month = month[(month==float(m))]            #only take data from this particular month, because some .pos files include some data from the next month (in the wrong file)
+        cut=len(month)                              #now that data is taken out the length of all the arrays must be changes as well
+        day = array(date[0:cut,2], dtype=float)
+        hour = array(time[0:cut,0], dtype=float)
+        minute = array(time[0:cut,1], dtype=float)
+        second = array(time[0:cut,2], dtype=float)
+        
+        T = day+hour/24.+minute/(60.*24.)+second/(3600.*24.) #convert into day of month
+    
+        daysofyear=down+T                   #get day of year
+       
+        """position"""
+        X = data[a:a+cut,2]             #Create position arrays and change to the new size
+        X = array(X, dtype=float)       #make floating number
+        Y = data[a:a+cut,3]
+        Y = array(Y, dtype=float)
+        Z = data[a:a+cut,4]
+        Z = array(Z, dtype=float)
+        Q = data[a:a+cut,5]
+        Q = array(Q, dtype=float)
+        
+        dx = data[a:a+cut,7]
+        dx = array(dx, dtype=float)
+        dy = data[a:a+cut,8]
+        dy = array(dy, dtype=float)
+        dz = data[a:a+cut,9]
+        dz = array(dz, dtype=float)
+        
+        "transformation of coordinates"
+        E,N,U = ECEF2ENU(X,Y,Z)         #transfrom ECEF coordinates to ENU coordinates
+        
+        
+        "take out bad data"
+        err = 0.1 # max tolerable error
+        E = E[(Q==1) & (dx<=err) & (dy<=err) & (dz<=err)]           #Take only relevant data that fullfills the given criteria
+        N = N[(Q==1) & (dx<=err) & (dy<=err) & (dz<=err)]
+        U = U[(Q==1) & (dx<=err) & (dy<=err) & (dz<=err)]
+        T = T[(Q==1) & (dx<=err) & (dy<=err) & (dz<=err)]
+        dX = dx[(Q==1) & (dx<=err) & (dy<=err) & (dz<=err)]
+        dY = dy[(Q==1) & (dx<=err) & (dy<=err) & (dz<=err)]
+        dZ = dz[(Q==1) & (dx<=err) & (dy<=err) & (dz<=err)]
+        month = month[(Q==1) & (dx<=err) & (dy<=err) & (dz<=err)]
+        daysofyear = daysofyear[(Q==1) & (dx<=err) & (dy<=err) & (dz<=err)]
+            
+        if len(E)==0:               #Sometimes something goes wrong in the process. The size of the arrays could be wrong, or the data file is too empty because too much data is taken out. 
+            print('ERROR: range a:b has no data')
+            break
+
+        files = vstack((T,E))                 #stack all arrays into one big data file
+        files = vstack((files,N))
+        files = vstack((files,U))
+        files = vstack((files,dX))
+        files = vstack((files,dY))
+        files = vstack((files,dZ))
+        files = vstack((files,month))
+        files = vstack((files,daysofyear))
+        files = files.T                       #Transpose array. Because I used vstack instead of hstack, I'd like to change the shape.
+            
+        first_row=array([3,3,3,3,3,3,3,3,3])  #create dummy array to have the a right size array to start the loop. This row will be removed.
+            
+        if 'final' in locals():               #If there is already an array (after having looped one time) the need for a dummy array is not needed
+            final = vstack((final,files))
+        else:
+            first_row = first_row.T 
+            final = vstack((first_row,files))
+
+    
+
+    
+        del E,N,U,T,dX,dY,dZ,X,Y,Z,Q,dx,dy,dz
+        del data,add,dates,day,second,hour,minute,times,date,files,month
+    else:                                   #if there is no data for this month skip the entire loop, see "if" above.
+        print('month doesnt exist', fn)
+
+final = final[1:,:]     #delete first dummy row
+savetxt(OUTPUT_ROOT+rover+year+'_complete.txt', final)    #save to text file.
+del final
